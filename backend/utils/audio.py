@@ -5,6 +5,7 @@ Audio processing utilities.
 import numpy as np
 import soundfile as sf
 import librosa
+from pathlib import Path
 from typing import Tuple, Optional
 
 
@@ -71,13 +72,23 @@ def save_audio(
 ) -> None:
     """
     Save audio file.
-    
+
     Args:
         audio: Audio array
         path: Output path
         sample_rate: Sample rate
     """
-    sf.write(path, audio, sample_rate)
+    import os
+    dest = Path(path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = str(dest) + ".tmp"
+    try:
+        sf.write(tmp_path, audio, sample_rate)
+        os.replace(tmp_path, path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
 
 
 def validate_reference_audio(

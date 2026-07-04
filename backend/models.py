@@ -299,3 +299,8 @@ class StoryItemTrim(BaseModel):
 class StoryItemSplit(BaseModel):
     """Request model for splitting a story item."""
     split_time_ms: int = Field(..., ge=0)  # Time within the clip to split at (relative to clip start)
+
+
+class ModelMigrateRequest(BaseModel):
+    """Request model for migrating HuggingFace model cache to a new location."""
+    destination: str

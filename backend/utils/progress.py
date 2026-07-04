@@ -108,31 +108,30 @@ class ProgressManager:
             "timestamp": datetime.now().isoformat(),
         }
 
-        # Thread-safe update of progress dict (always update internal state)
+        # Thread-safe update of progress dict and throttle state
+        current_time = time.time()
         with self._lock:
             self._progress[model_name] = progress_data
 
-        # Check if we should notify listeners (throttling)
-        current_time = time.time()
-        last_time = self._last_notify_time.get(model_name, 0)
-        last_progress = self._last_notify_progress.get(model_name, -100)
-        
-        time_delta = current_time - last_time
-        progress_delta = abs(progress_pct - last_progress)
-        
-        # Always notify for complete/error status, or if throttle conditions are met
-        should_notify = (
-            status in ("complete", "error") or
-            time_delta >= self.THROTTLE_INTERVAL_SECONDS or
-            progress_delta >= self.THROTTLE_PROGRESS_DELTA
-        )
-        
+            last_time = self._last_notify_time.get(model_name, 0)
+            last_progress = self._last_notify_progress.get(model_name, -100)
+
+            time_delta = current_time - last_time
+            progress_delta = abs(progress_pct - last_progress)
+
+            # Always notify for complete/error status, or if throttle conditions are met
+            should_notify = (
+                status in ("complete", "error") or
+                time_delta >= self.THROTTLE_INTERVAL_SECONDS or
+                progress_delta >= self.THROTTLE_PROGRESS_DELTA
+            )
+
+            if should_notify:
+                self._last_notify_time[model_name] = current_time
+                self._last_notify_progress[model_name] = progress_pct
+
         if not should_notify:
             return  # Skip this update (throttled)
-        
-        # Update throttle tracking
-        self._last_notify_time[model_name] = current_time
-        self._last_notify_progress[model_name] = progress_pct
 
         # Notify all listeners (thread-safe)
         listener_count = len(self._listeners.get(model_name, []))

@@ -59,9 +59,15 @@ setup-python: $(VENV)/bin/activate ## Set up Python virtual environment and depe
 $(VENV)/bin/activate:
 	@echo -e "$(BLUE)Creating Python virtual environment...$(NC)"
 	@PY_MINOR=$$($(PYTHON) -c "import sys; print(sys.version_info[1])"); \
-	if [ "$$PY_MINOR" -gt 13 ]; then \
+	if [ "$$PY_MINOR" -eq 13 ]; then \
+		echo -e "$(YELLOW)Warning: Python 3.13 detected. numba 0.60 has no cp313 wheel and will fail to install.$(NC)"; \
+		echo -e "$(YELLOW)Recommended: Create the venv with Python 3.12 before running setup:$(NC)"; \
+		echo -e "$(YELLOW)  uv venv --python 3.12 $(VENV) && make setup-python$(NC)"; \
+		exit 1; \
+	elif [ "$$PY_MINOR" -gt 13 ]; then \
 		echo -e "$(YELLOW)Warning: Python 3.$$PY_MINOR detected. ML packages may not be compatible.$(NC)"; \
-		echo -e "$(YELLOW)Recommended: Use Python 3.12 or 3.13 (brew install python@3.12)$(NC)"; \
+		echo -e "$(YELLOW)Recommended: Use Python 3.12 (brew install python@3.12)$(NC)"; \
+		exit 1; \
 	fi
 	$(PYTHON) -m venv $(VENV)
 
