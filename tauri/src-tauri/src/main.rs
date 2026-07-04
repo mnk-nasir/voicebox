@@ -599,6 +599,17 @@ fn stop_audio_playback(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // tao ≤ 0.35.x panics on Wayland with NVIDIA GPUs (event-loop unwrap on None).
+    // Force X11 via XWayland when a Wayland compositor is present so the GDK
+    // backend picks a working path. Users who need native Wayland can unset this
+    // after tao gains stable Wayland support.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var_os("GDK_BACKEND").is_none()
+    {
+        std::env::set_var("GDK_BACKEND", "x11");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())

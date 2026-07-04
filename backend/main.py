@@ -1555,6 +1555,65 @@ async def delete_model(model_name: str):
         raise HTTPException(status_code=500, detail=f"Failed to delete model: {str(e)}")
 
 
+@app.post("/models/migrate")
+async def migrate_models(request: models.ModelMigrateRequest):
+    """Move all HuggingFace model cache directories to a new location.
+
+    The destination must be an absolute path that resolves inside one of the
+    approved storage roots (the default HF cache or the voicebox data dir).
+    Requests targeting other paths are rejected to prevent path-traversal.
+    """
+    import shutil
+    from huggingface_hub import constants as hf_constants
+
+    allowed_roots = [
+        Path(hf_constants.HF_HUB_CACHE).resolve().parent,
+        config.get_data_dir().resolve(),
+    ]
+
+    destination = Path(request.destination).resolve()
+
+    if not destination.is_absolute():
+        raise HTTPException(status_code=400, detail="destination must be an absolute path")
+
+    if not any(
+        str(destination).startswith(str(root)) for root in allowed_roots
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "destination is outside approved storage locations. "
+                "Choose a path inside the HuggingFace cache parent or the voicebox data directory."
+            ),
+        )
+
+    cache_dir = Path(hf_constants.HF_HUB_CACHE)
+    if not cache_dir.exists():
+        raise HTTPException(status_code=404, detail="HuggingFace cache directory not found")
+
+    if destination == cache_dir.resolve():
+        raise HTTPException(status_code=400, detail="destination is the same as the current cache directory")
+
+    destination.mkdir(parents=True, exist_ok=True)
+    moved: list[str] = []
+    errors: list[str] = []
+
+    for entry in cache_dir.iterdir():
+        if not entry.name.startswith("models--"):
+            continue
+        target = destination / entry.name
+        if target.exists():
+            errors.append(f"{entry.name}: destination already exists, skipped")
+            continue
+        try:
+            shutil.move(str(entry), str(target))
+            moved.append(entry.name)
+        except OSError as exc:
+            errors.append(f"{entry.name}: {exc}")
+
+    return {"moved": moved, "errors": errors, "destination": str(destination)}
+
+
 @app.post("/cache/clear")
 async def clear_cache():
     """Clear all voice prompt caches (memory and disk)."""
@@ -1632,6 +1691,81 @@ async def get_active_tasks():
         downloads=active_downloads,
         generations=active_generations,
     )
+
+
+# ============================================
+# MCP (MODEL CONTEXT PROTOCOL) ENDPOINTS
+# Tool names use underscores only — dots are rejected by Claude Desktop's
+# pattern ^[a-zA-Z0-9_-]{1,64}$ (fixes issue #790).
+# ============================================
+
+@app.get("/mcp/tools")
+async def mcp_list_tools():
+    """Return the list of MCP tool definitions with compliant names."""
+    return {
+        "tools": [
+            {
+                "name": "voicebox_speak",
+                "description": "Generate speech audio from text using a voice profile.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "description": "Text to synthesise"},
+                        "profile_id": {"type": "string", "description": "Voice profile ID"},
+                    },
+                    "required": ["text"],
+                },
+            },
+            {
+                "name": "voicebox_transcribe",
+                "description": "Transcribe an audio file to text.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "audio_url": {"type": "string", "description": "URL or path to audio file"},
+                        "language": {"type": "string", "description": "BCP-47 language code (optional)"},
+                    },
+                    "required": ["audio_url"],
+                },
+            },
+            {
+                "name": "voicebox_list_captures",
+                "description": "List all recorded audio captures.",
+                "inputSchema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "voicebox_list_profiles",
+                "description": "List all available voice profiles.",
+                "inputSchema": {"type": "object", "properties": {}},
+            },
+        ]
+    }
+
+
+@app.post("/mcp/call/{tool_name}")
+async def mcp_call_tool(tool_name: str, body: dict, db: Session = Depends(get_db)):
+    """Dispatch an MCP tool call by name."""
+    if tool_name == "voicebox_list_profiles":
+        return await profiles.list_profiles(db)
+
+    if tool_name == "voicebox_list_captures":
+        return await list_history(db)
+
+    if tool_name == "voicebox_speak":
+        text = body.get("text")
+        profile_id = body.get("profile_id")
+        if not text:
+            raise HTTPException(status_code=400, detail="'text' is required")
+        req = models.GenerationRequest(text=text, profile_id=profile_id)
+        return await generate_speech(req, db)
+
+    if tool_name == "voicebox_transcribe":
+        raise HTTPException(
+            status_code=422,
+            detail="voicebox_transcribe requires a multipart file upload; use POST /transcribe directly.",
+        )
+
+    raise HTTPException(status_code=404, detail=f"Unknown MCP tool: {tool_name}")
 
 
 # ============================================
